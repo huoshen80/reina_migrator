@@ -14,27 +14,19 @@ permissions:
 
 jobs:
   build:
-    name: Build for ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: reina_migrator.exe
+    name: Build Windows Release
+    runs-on: windows-latest
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
     - name: Setup Rust
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: stable
-        target: ${{ matrix.target }}
-        override: true
+        targets: x86_64-pc-windows-msvc
 
     - name: Cache cargo dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/.cargo/bin/
@@ -45,22 +37,18 @@ jobs:
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Build release
-      uses: actions-rs/cargo@v1
-      with:
-        command: build
-        args: --release --target ${{ matrix.target }}
+      run: cargo build --release --target x86_64-pc-windows-msvc
 
-    - name: Prepare artifact (Windows)
-      if: matrix.os == 'windows-latest'
+    - name: Prepare artifact
       run: |
         mkdir release
-        copy target\${{ matrix.target }}\release\reina_migrator.exe release\
+        copy target\x86_64-pc-windows-msvc\release\reina_migrator.exe release\
         copy README.md release\
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: reina_migrator-${{ matrix.target }}
+        name: reina_migrator-x86_64-pc-windows-msvc
         path: release/
 
   release:
@@ -69,34 +57,30 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     
     steps:
-    - name: Download all artifacts
+    - name: Download artifacts
       uses: actions/download-artifact@v4
+      with:
+        name: reina_migrator-x86_64-pc-windows-msvc
+        path: ./artifacts
       
-    - name: Create release archives
+    - name: Create release archive
       run: |
-        for dir in reina_migrator-*; do
-          if [[ "$dir" == *"windows"* ]]; then
-            cd "$dir" && zip -r "../${dir}.zip" . && cd ..
-          else
-            tar -czf "${dir}.tar.gz" -C "$dir" .
-          fi
-        done
+        cd artifacts && zip -r ../reina_migrator-x86_64-pc-windows-msvc.zip . && cd ..
 
     - name: Create Release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         files: |
           *.zip
         body: |
-          ## Reina Migrator Release
-          
-          自动构建的 Reina Migrator 仅针对 Windows 平台，用于将 Whitecloud 数据库迁移到 Reina Manager。
+          ## ReinaMigrator Release
+
+          自动构建的 ReinaMigrator用于将 Whitecloud 数据库迁移到 ReinaManager。
           
           ### 使用方法
-          1. 将 `db.3.sqlite` 文件放在与程序相同的目录下
-          2. 运行 `reina_migrator.exe` (Windows)
-          3. 程序会自动将数据迁移到 `%APPDATA%\Roaming\com.reinamanager.dev\data\reina_manager.db`
+          1. 找到 `db.3.sqlite` 文件，它一般位于 `whitecloud安装路径\resources\data\db.3.sqlite`
+          2. 将 `db.3.sqlite` 放在程序同一目录
+          3. 运行 `reina_migrator.exe`
+          4. 程序会自动将数据迁移到 `%APPDATA%\Roaming\com.reinamanager.dev\data\reina_manager.db`
         draft: false
         prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
