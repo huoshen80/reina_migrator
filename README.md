@@ -2,6 +2,9 @@
 
 这是一个用于将 Whitecloud 数据迁移到ReinaManager的工具。
 
+## 适用于
+- ReinaManager v0.7.0 及以上版本
+
 ## 功能特性
 
 - 使用 SeaORM 进行数据库操作
@@ -30,20 +33,26 @@
 
 ### 旧数据库 -> 新数据库
 
+
 #### games 表映射：
-- `name` -> `name`
 - `gameDir` + `exePath` -> `localpath` (组合路径)
 - `saveDir` -> `savepath`
 - `uuid` -> 用于关联其他表的数据
 - 固定值：
   - `id_type` = "Whitecloud"
-  - `image` = "/images/default.png"
   - `clear` = 0
   - `autosave` = 0
+  - 迁移时自动生成 `created_at`、`updated_at`
+
+#### other_data 表映射：
+- `name` -> `name`
+- 固定值：
+  - `image` = "/images/default.png"
+  - 其余字段如 `summary`、`tags`、`developer` 暂为 None
+
 
 #### 时间处理：
-- 从 `events` 表中查找 `type = "GameEvent"` 的记录
-- 将时间戳转换为 ISO 8601 格式 (如：2025-08-23T05:21:10.539Z)
+- 迁移时不再单独迁移游戏时间字段，所有时间相关内容通过会话和统计表处理
 
 #### 会话记录：
 - 从 `history` 表迁移到 `game_sessions` 表
@@ -51,18 +60,28 @@
 
 ## 数据映射
 
+
 ### 游戏表 (games)
 
 | 旧字段 | 新字段 | 说明 |
 |--------|--------|------|
-| name | name | 游戏名称 |
 | gameDir + exePath | localpath | 游戏本地路径 |
 | saveDir | savepath | 存档路径 |
 | uuid | - | 用于关联其他表 |
 | - | id_type | 固定为 "Whitecloud" |
-| - | image | 固定为 "/images/default.png" |
 | - | clear | 固定为 0 |
 | - | autosave | 固定为 0 |
+| - | created_at/updated_at | 迁移时自动生成 |
+
+### 其他数据表 (other_data)
+
+| 旧字段 | 新字段 | 说明 |
+|--------|--------|------|
+| name | name | 游戏名称 |
+| - | image | 固定为 "/images/default.png" |
+| - | summary | 暂无，保留字段 |
+| - | tags | 暂无，保留字段 |
+| - | developer | 暂无，保留字段 |
 
 ### 时间处理
 

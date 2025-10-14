@@ -65,13 +65,13 @@ jobs:
       
     - name: Create release archive
       run: |
-        cd artifacts && zip -r ../reina_migrator-x86_64-pc-windows-msvc.zip . && cd ..
+        zip_name="reina_migrator-${{ github.ref_name }}.zip"
+        cd artifacts && zip -r ../$zip_name . && cd ..
 
     - name: Create Release
       uses: softprops/action-gh-release@v2
       with:
-        files: |
-          *.zip
+        files: reina_migrator-${{ github.ref_name }}.zip
         body: |
           ## ReinaMigrator Release
 

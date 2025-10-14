@@ -173,13 +173,6 @@ async fn migrate_games(old_db: &DatabaseConnection, new_db: &DatabaseConnection)
                 old_game.exe_path.clone()
             };
 
-        // 查找对应的 GameEvent 获取时间
-        let game_time = if let Some(uuid) = &old_game.uuid {
-            find_game_event_time(old_db, uuid).await?
-        } else {
-            None
-        };
-
         // 创建新的游戏记录
         let new_game = reina::games::ActiveModel {
             id: Default::default(), // 自动生成
@@ -187,26 +180,32 @@ async fn migrate_games(old_db: &DatabaseConnection, new_db: &DatabaseConnection)
             vndb_id: Set(None),
             id_type: Set("Whitecloud".to_string()),
             date: Set(None),
-            image: Set(Some("/images/default.png".to_string())),
-            summary: Set(None),
-            name: Set(old_game.name.clone()),
-            name_cn: Set(None),
-            tags: Set(None),
-            rank: Set(None),
-            score: Set(None),
-            time: Set(game_time),
             localpath: Set(localpath),
-            developer: Set(None),
-            all_titles: Set(None),
-            aveage_hours: Set(None),
-            clear: Set(Some(0)),
             savepath: Set(old_game.save_dir.clone()),
             autosave: Set(Some(0)),
+            clear: Set(Some(0)),
+            custom_name: Set(None),
+            custom_cover: Set(None),
+            created_at: Set(Some(chrono::Utc::now().timestamp() as i32)),
+            updated_at: Set(Some(chrono::Utc::now().timestamp() as i32)),
         };
 
         // 插入新游戏记录
         let inserted_game = new_game.insert(new_db).await?;
         println!("已插入游戏 ID: {}", inserted_game.id);
+
+        // 创建 other_data 记录
+        let other_data = reina::other_data::ActiveModel {
+            game_id: Set(inserted_game.id),
+            image: Set(Some("/images/default.png".to_string())),
+            name: Set(old_game.name.clone()),
+            summary: Set(None),
+            tags: Set(None),
+            developer: Set(None),
+        };
+
+        // 插入 other_data 记录
+        other_data.insert(new_db).await?;
 
         // 如果有历史记录，也迁移游戏会话
         if let Some(uuid) = &old_game.uuid {
@@ -215,27 +214,6 @@ async fn migrate_games(old_db: &DatabaseConnection, new_db: &DatabaseConnection)
     }
 
     Ok(())
-}
-
-async fn find_game_event_time(old_db: &DatabaseConnection, uuid: &str) -> Result<Option<String>> {
-    let event = whitecloud::event::Entity::find()
-        .filter(whitecloud::event::Column::Game.eq(uuid))
-        .filter(whitecloud::event::Column::EventType.eq("GameEvent"))
-        .one(old_db)
-        .await?;
-
-    if let Some(event) = event {
-        if let Some(time_ms) = event.time {
-            // 将毫秒时间戳转换为秒级时间戳，然后转为 ISO 8601 格式
-            let time_s = (time_ms / 1000.0) as i64;
-            let datetime = DateTime::from_timestamp(time_s, 0);
-            if let Some(datetime) = datetime {
-                return Ok(Some(datetime.to_rfc3339()));
-            }
-        }
-    }
-
-    Ok(None)
 }
 
 async fn migrate_game_sessions(
@@ -292,11 +270,11 @@ async fn migrate_game_sessions(
                 let session = reina::game_sessions::ActiveModel {
                     session_id: Default::default(),
                     game_id: Set(new_game_id),
-                    start_time: Set(start_time),
-                    end_time: Set(end_time),
-                    duration: Set(duration), // duration 已经是分钟单位
+                    start_time: Set(start_time as i32),
+                    end_time: Set(end_time as i32),
+                    duration: Set(duration as i32), // duration 已经是分钟单位
                     date: Set(date.clone()),
-                    created_at: Set(Some(chrono::Utc::now().timestamp())),
+                    created_at: Set(Some(chrono::Utc::now().timestamp() as i32)),
                 };
 
                 session.insert(new_db).await?;
@@ -332,9 +310,9 @@ async fn migrate_game_sessions(
 
         let stats = reina::game_statistics::ActiveModel {
             game_id: Set(new_game_id),
-            total_time: Set(Some(total_time)),
+            total_time: Set(Some(total_time as i32)),
             session_count: Set(Some(session_count)),
-            last_played: Set(last_played),
+            last_played: Set(last_played.map(|t| t as i32)),
             daily_stats: Set(Some(daily_stats_json)),
         };
 
