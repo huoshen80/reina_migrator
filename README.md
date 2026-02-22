@@ -3,7 +3,7 @@
 这是一个用于将 Whitecloud 数据迁移到ReinaManager的工具。
 
 ## 适用于
-- ReinaManager v0.7.0 及以上版本
+- ReinaManager v0.15.0 及以上版本
 
 ## 功能特性
 
@@ -33,23 +33,17 @@
 
 ### 旧数据库 -> 新数据库
 
-
 #### games 表映射：
 - `gameDir` + `exePath` -> `localpath` (组合路径)
 - `saveDir` -> `savepath`
+- `name` -> `custom_data` JSON 中的 `name` 字段
 - `uuid` -> 用于关联其他表的数据
 - 固定值：
   - `id_type` = "Whitecloud"
-  - `clear` = 0
-  - `autosave` = 0
+  - `clear` = 1
+  - `vndb_data`、`bgm_data`、`ymgal_data` 暂为 None
+  - `autosave`、`maxbackups`、`le_launch`、`magpie` 等字段使用默认值
   - 迁移时自动生成 `created_at`、`updated_at`
-
-#### other_data 表映射：
-- `name` -> `name`
-- 固定值：
-  - `image` = "/images/default.png"
-  - 其余字段如 `summary`、`tags`、`developer` 暂为 None
-
 
 #### 时间处理：
 - 迁移时不再单独迁移游戏时间字段，所有时间相关内容通过会话和统计表处理
@@ -69,19 +63,16 @@
 | saveDir | savepath | 存档路径 |
 | uuid | - | 用于关联其他表 |
 | - | id_type | 固定为 "Whitecloud" |
-| - | clear | 固定为 0 |
-| - | autosave | 固定为 0 |
+| - | clear | 固定为 1 |
+| - | autosave | 默认值 |
+| - | bgm_data | JSON 列，迁移时为 None |
+| - | vndb_data | JSON 列，迁移时为 None |
+| - | ymgal_data | JSON 列，迁移时为 None |
+| - | custom_data | JSON 列，包含 name |
+| - | maxbackups | 默认值 |
+| - | le_launch | 默认值 |
+| - | magpie | 默认值|
 | - | created_at/updated_at | 迁移时自动生成 |
-
-### 其他数据表 (other_data)
-
-| 旧字段 | 新字段 | 说明 |
-|--------|--------|------|
-| name | name | 游戏名称 |
-| - | image | 固定为 "/images/default.png" |
-| - | summary | 暂无，保留字段 |
-| - | tags | 暂无，保留字段 |
-| - | developer | 暂无，保留字段 |
 
 ### 时间处理
 

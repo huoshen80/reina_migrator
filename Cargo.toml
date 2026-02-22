@@ -1,11 +1,15 @@
 [package]
 name = "reina_migrator"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [dependencies]
-sea-orm = { version = "1.1.17", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros"] }
-tokio = { version = "1.47.1", features = ["full"] }
+sea-orm = { version = "1.1.19", features = [
+    "sqlx-sqlite",
+    "runtime-tokio-rustls",
+    "macros",
+] }
+tokio = { version = "1.49.0", features = ["full"] }
 chrono = { version = "0.4.42", features = ["serde"] }
 anyhow = "1.0.100"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -14,8 +18,8 @@ uuid = { version = "1.18.1", features = ["v4"] }
 dirs = "6.0.0"
 
 [profile.release]
-opt-level = "z"            # optimize for size (use 3 for max speed)
-lto = true                  # enable link time optimization
-codegen-units = 1           # better optimizations
-panic = "abort"            # smaller binary
-strip = "debuginfo"       # strip debug info from final binary
+opt-level = "z"     # optimize for size (use 3 for max speed)
+lto = true          # enable link time optimization
+codegen-units = 1   # better optimizations
+panic = "abort"     # smaller binary
+strip = "debuginfo" # strip debug info from final binary
