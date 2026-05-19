@@ -135,8 +135,14 @@ async fn migrate_games(old_db: &DatabaseConnection, new_db: &DatabaseConnection)
         println!("已插入游戏 ID: {}", inserted.id);
 
         if let Some(uuid) = &old_game.uuid {
-            let events = preloaded.events_by_game.get(uuid.as_str()).map(|v| v.as_slice());
-            let histories = preloaded.histories_by_game.get(uuid.as_str()).map(|v| v.as_slice());
+            let events = preloaded
+                .events_by_game
+                .get(uuid.as_str())
+                .map(|v| v.as_slice());
+            let histories = preloaded
+                .histories_by_game
+                .get(uuid.as_str())
+                .map(|v| v.as_slice());
             migrate_game_sessions(&txn, events, histories, inserted.id).await?;
         }
     }

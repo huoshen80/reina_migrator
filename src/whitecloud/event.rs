@@ -6,7 +6,7 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
     pub game: Option<String>,
-    pub state: Option<String>,  // 修改为 String 类型
+    pub state: Option<String>, // 修改为 String 类型
     pub context: Option<Vec<u8>>,
     pub time: Option<f64>,
     pub host: Option<String>,
