@@ -1,9 +1,10 @@
 # Reina Migrator - 为ReinaManager提供的数据迁移工具
 
-这是一个用于将 Whitecloud 数据迁移到ReinaManager的工具。
+这是一个用于将 Whitecloud v0.4.0 数据迁移到ReinaManager的工具。
 
 ## 适用于
 - ReinaManager v0.20.0 及以上版本
+- Whitecloud v0.4.0 数据库结构
 
 ## 功能特性
 
