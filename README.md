@@ -3,7 +3,7 @@
 这是一个用于将 Whitecloud 数据迁移到ReinaManager的工具。
 
 ## 适用于
-- ReinaManager v0.15.0 及以上版本
+- ReinaManager v0.20.0 及以上版本
 
 ## 功能特性
 
@@ -41,9 +41,10 @@
 - 固定值：
   - `id_type` = "Whitecloud"
   - `clear` = 1
-  - `vndb_data`、`bgm_data`、`ymgal_data` 暂为 None
-  - `autosave`、`maxbackups`、`le_launch`、`magpie` 等字段使用默认值
-  - 迁移时自动生成 `created_at`、`updated_at`
+- 未映射字段：
+  - `bgm_id`、`vndb_id`、`ymgal_id`、`kun_id` 等外部 ID 不写入
+  - `vndb_data`、`bgm_data`、`ymgal_data`、`kun_data` 等元数据不写入
+  - `autosave`、`maxbackups`、`le_launch`、`magpie`、`created_at`、`updated_at` 等字段由 Reina 数据库默认值处理
 
 #### 时间处理：
 - 迁移时不再单独迁移游戏时间字段，所有时间相关内容通过会话和统计表处理
@@ -64,15 +65,9 @@
 | uuid | - | 用于关联其他表 |
 | - | id_type | 固定为 "Whitecloud" |
 | - | clear | 固定为 1 |
-| - | autosave | 默认值 |
-| - | bgm_data | JSON 列，迁移时为 None |
-| - | vndb_data | JSON 列，迁移时为 None |
-| - | ymgal_data | JSON 列，迁移时为 None |
 | - | custom_data | JSON 列，包含 name |
-| - | maxbackups | 默认值 |
-| - | le_launch | 默认值 |
-| - | magpie | 默认值|
-| - | created_at/updated_at | 迁移时自动生成 |
+
+未映射的 Reina 字段不由迁移器声明或写入；数据库会使用 `NULL` 或表结构中的默认值。
 
 ### 时间处理
 

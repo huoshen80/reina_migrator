@@ -119,30 +119,16 @@ async fn migrate_games(old_db: &DatabaseConnection, new_db: &DatabaseConnection)
     for old_game in &old_games {
         println!("迁移游戏: {:?}", old_game.name);
 
-        let now_ts = chrono::Utc::now().timestamp() as i32;
         let localpath = build_localpath(&old_game.game_dir, &old_game.exe_path);
         let custom_data = build_custom_data_json(&old_game.name)?;
 
         let new_game = reina::games::ActiveModel {
             id: NotSet,
-            bgm_id: Set(None),
-            vndb_id: Set(None),
-            ymgal_id: Set(None),
             id_type: Set("Whitecloud".to_string()),
-            date: Set(None),
             localpath: Set(localpath),
             savepath: Set(old_game.save_dir.clone()),
-            autosave: NotSet,
-            maxbackups: NotSet,
             clear: Set(Some(1)),
-            le_launch: NotSet,
-            magpie: NotSet,
-            vndb_data: Set(None),
-            bgm_data: Set(None),
-            ymgal_data: Set(None),
             custom_data: Set(custom_data),
-            created_at: Set(Some(now_ts)),
-            updated_at: Set(Some(now_ts)),
         };
 
         let inserted = new_game.insert(&txn).await?;
@@ -173,7 +159,6 @@ async fn migrate_game_sessions<C: ConnectionTrait>(
         _ => return Ok(()),
     };
 
-    let now_ts = chrono::Utc::now().timestamp() as i32;
     let mut session_batch = Vec::new();
     let mut total_time = 0i64;
     let mut session_count = 0i32;
@@ -197,7 +182,6 @@ async fn migrate_game_sessions<C: ConnectionTrait>(
             end_time: Set(end_time as i32),
             duration: Set(duration as i32),
             date: Set(date.clone()),
-            created_at: Set(Some(now_ts)),
         });
 
         total_time += duration;
