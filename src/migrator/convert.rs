@@ -10,12 +10,28 @@ use crate::whitecloud;
 
 // ─────────────────────────── 路径 & JSON 构建 ───────────────────────────
 
-/// 拼接 Windows 本地路径（`game_dir\exe_path`）
-pub fn build_localpath(game_dir: &Option<String>, exe_path: &Option<String>) -> Option<String> {
-    match (game_dir, exe_path) {
-        (Some(dir), Some(exe)) => Some(format!("{}\\{}", dir, exe)),
-        (Some(dir), None) => Some(dir.clone()),
-        (None, exe) => exe.clone(),
+/// 将 Whitecloud 启动路径映射为 ReinaManager 的目录和文件名字段。
+///
+/// ReinaManager v0.25.0 起，`localpath` 只保存目录，`executable` 只保存
+/// 启动文件名。若旧数据仅有启动文件名，则以 `.` 表示其相对目录，避免产生
+/// `localpath IS NULL AND executable IS NOT NULL` 的非法状态。
+pub fn build_launch_fields(
+    game_dir: &Option<String>,
+    exe_path: &Option<String>,
+) -> (Option<String>, Option<String>) {
+    let localpath = game_dir
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+        .cloned();
+    let executable = exe_path
+        .as_ref()
+        .filter(|value| !value.trim().is_empty())
+        .cloned();
+
+    match (localpath, executable) {
+        (Some(localpath), executable) => (Some(localpath), executable),
+        (None, Some(executable)) => (Some(".".to_string()), Some(executable)),
+        (None, None) => (None, None),
     }
 }
 
@@ -110,4 +126,46 @@ fn find_duration_from_histories(
         }
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_launch_fields;
+
+    #[test]
+    fn maps_directory_and_executable_to_separate_fields() {
+        let actual = build_launch_fields(
+            &Some(r"D:\Games\Foo".to_string()),
+            &Some("Foo.exe".to_string()),
+        );
+
+        assert_eq!(
+            actual,
+            (
+                Some(r"D:\Games\Foo".to_string()),
+                Some("Foo.exe".to_string())
+            )
+        );
+    }
+
+    #[test]
+    fn preserves_a_directory_without_an_executable() {
+        let actual = build_launch_fields(&Some(r"D:\Games\Foo".to_string()), &None);
+
+        assert_eq!(actual, (Some(r"D:\Games\Foo".to_string()), None));
+    }
+
+    #[test]
+    fn gives_an_orphan_executable_a_relative_directory() {
+        let actual = build_launch_fields(&None, &Some("Foo.exe".to_string()));
+
+        assert_eq!(actual, (Some(".".to_string()), Some("Foo.exe".to_string())));
+    }
+
+    #[test]
+    fn treats_blank_path_fields_as_missing() {
+        let actual = build_launch_fields(&Some("  ".to_string()), &Some("\t".to_string()));
+
+        assert_eq!(actual, (None, None));
+    }
 }

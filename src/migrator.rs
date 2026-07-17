@@ -18,7 +18,7 @@ use crate::db::connection::{connect_new_db, connect_old_db};
 use crate::{reina, whitecloud};
 
 use self::convert::{
-    build_custom_data_json, build_daily_stats_json, build_localpath, resolve_event_duration,
+    build_custom_data_json, build_daily_stats_json, build_launch_fields, resolve_event_duration,
     timestamp_to_date,
 };
 
@@ -119,13 +119,14 @@ async fn migrate_games(old_db: &DatabaseConnection, new_db: &DatabaseConnection)
     for old_game in &old_games {
         println!("迁移游戏: {:?}", old_game.name);
 
-        let localpath = build_localpath(&old_game.game_dir, &old_game.exe_path);
+        let (localpath, executable) = build_launch_fields(&old_game.game_dir, &old_game.exe_path);
         let custom_data = build_custom_data_json(&old_game.name)?;
 
         let new_game = reina::games::ActiveModel {
             id: NotSet,
             id_type: Set("Whitecloud".to_string()),
             localpath: Set(localpath),
+            executable: Set(executable),
             savepath: Set(old_game.save_dir.clone()),
             clear: Set(Some(1)),
             custom_data: Set(custom_data),

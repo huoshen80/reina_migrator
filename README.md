@@ -3,7 +3,7 @@
 这是一个用于将 Whitecloud v0.4.0 数据迁移到ReinaManager的工具。
 
 ## 适用于
-- ReinaManager v0.20.0 及以上版本
+- ReinaManager v0.25.0 及以上版本
 - Whitecloud v0.4.0 数据库结构
 
 ## 功能特性
@@ -35,7 +35,8 @@
 ### 旧数据库 -> 新数据库
 
 #### games 表映射：
-- `gameDir` + `exePath` -> `localpath` (组合路径)
+- `gameDir` -> `localpath`（游戏目录）
+- `exePath` -> `executable`（启动文件名）
 - `saveDir` -> `savepath`
 - `name` -> `custom_data` JSON 中的 `name` 字段
 - `uuid` -> 用于关联其他表的数据
@@ -43,8 +44,7 @@
   - `id_type` = "Whitecloud"
   - `clear` = 1
 - 未映射字段：
-  - `bgm_id`、`vndb_id`、`ymgal_id`、`kun_id` 等外部 ID 不写入
-  - `vndb_data`、`bgm_data`、`ymgal_data`、`kun_data` 等元数据不写入
+  - `game_sources` 外部数据源记录不写入
   - `autosave`、`maxbackups`、`le_launch`、`magpie`、`created_at`、`updated_at` 等字段由 Reina 数据库默认值处理
 
 #### 时间处理：
@@ -61,7 +61,8 @@
 
 | 旧字段 | 新字段 | 说明 |
 |--------|--------|------|
-| gameDir + exePath | localpath | 游戏本地路径 |
+| gameDir | localpath | 游戏目录 |
+| exePath | executable | 启动文件名 |
 | saveDir | savepath | 存档路径 |
 | uuid | - | 用于关联其他表 |
 | - | id_type | 固定为 "Whitecloud" |
