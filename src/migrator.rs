@@ -91,7 +91,7 @@ pub async fn run_migration_to(new_database_path: &str) -> Result<()> {
     let new_db = connect_new_db(new_database_path).await?;
 
     // 4. 备份新数据库
-    backup::backup_database(new_database_path)?;
+    backup::backup_database(&new_db, new_database_path).await?;
 
     // 5. 执行数据迁移
     println!("开始数据迁移...");
