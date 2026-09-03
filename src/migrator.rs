@@ -67,14 +67,14 @@ impl PreloadedData {
 pub async fn run_migration() -> Result<()> {
     println!("Reina Migrator - Whitecloud 数据库迁移工具");
 
-    // 1. 检查并关闭 ReinaManager 程序
+    // 1. 在关闭程序前校验数据库路径，避免配置错误时影响 ReinaManager
+    let old_database_path = Config::old_database_path()?;
+    let new_database_path = Config::new_database_path()?;
+
+    // 2. 检查并关闭 ReinaManager 程序
     if process::check_and_close_reina_manager()? {
         println!("已关闭 ReinaManager 程序");
     }
-
-    // 2. 获取数据库路径
-    let old_database_path = Config::old_database_path()?;
-    let new_database_path = Config::new_database_path()?;
 
     println!("旧数据库: {}", old_database_path);
     println!("新数据库: {}", new_database_path);
