@@ -16,6 +16,23 @@ impl Config {
         Ok(format!("sqlite:{}", db_path.display()))
     }
 
+    pub fn portable_database_path(reina_manager_dir: &Path) -> Result<String> {
+        let db_path = reina_manager_dir
+            .join("resources")
+            .join("data")
+            .join("reina_manager.db");
+        let db_path = Self::validate_database_file(db_path)?;
+        Ok(format!("sqlite:{}", db_path.display()))
+    }
+
+    pub(crate) fn validate_database_url(database_url: &str) -> Result<()> {
+        let db_path = database_url
+            .strip_prefix("sqlite:")
+            .ok_or_else(|| anyhow::anyhow!("目标数据库 URL 必须使用 sqlite: 前缀"))?;
+        Self::validate_database_file(PathBuf::from(db_path))?;
+        Ok(())
+    }
+
     fn installed_database_path_from_home(home_dir: &Path) -> Result<PathBuf> {
         let db_path = home_dir
             .join("AppData")
@@ -91,5 +108,48 @@ mod tests {
 
         assert_eq!(actual, db_path);
         fs::remove_dir_all(home_dir).unwrap();
+    }
+
+    #[test]
+    fn resolves_an_existing_portable_database() {
+        let reina_manager_dir = temporary_home();
+        let db_path = reina_manager_dir
+            .join("resources")
+            .join("data")
+            .join("reina_manager.db");
+        fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+        fs::File::create(&db_path).unwrap();
+
+        let actual = Config::portable_database_path(&reina_manager_dir).unwrap();
+
+        assert_eq!(actual, format!("sqlite:{}", db_path.display()));
+        fs::remove_dir_all(reina_manager_dir).unwrap();
+    }
+
+    #[test]
+    fn rejects_a_missing_portable_database_without_creating_directories() {
+        let reina_manager_dir = temporary_home();
+
+        let error = Config::portable_database_path(&reina_manager_dir).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains(r"resources\data\reina_manager.db"));
+        assert!(!reina_manager_dir.exists());
+    }
+
+    #[test]
+    fn rejects_a_portable_database_path_that_is_a_directory() {
+        let reina_manager_dir = temporary_home();
+        let db_path = reina_manager_dir
+            .join("resources")
+            .join("data")
+            .join("reina_manager.db");
+        fs::create_dir_all(&db_path).unwrap();
+
+        let error = Config::portable_database_path(&reina_manager_dir).unwrap_err();
+
+        assert!(error.to_string().contains("不存在或不是文件"));
+        fs::remove_dir_all(reina_manager_dir).unwrap();
     }
 }
