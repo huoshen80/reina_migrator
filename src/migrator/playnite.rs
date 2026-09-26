@@ -13,17 +13,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use super::dedup::{self, ImportedStatistics, MatchResult, StatisticsSlot, TargetIndex};
 use crate::playnite::{ExportDocument, ExportGame};
 use crate::reina;
 
 const MAX_COVER_BYTES: u64 = 20 * 1024 * 1024;
-
-#[derive(Debug, Hash, PartialEq, Eq)]
-enum GameIdentity {
-    Steam(String),
-    Local(String, String),
-    Pathless(String),
-}
 
 #[derive(Debug)]
 struct LaunchFields {
@@ -36,7 +30,11 @@ struct LaunchFields {
 #[derive(Debug, Default)]
 struct MigrationSummary {
     imported: usize,
-    skipped: usize,
+    statistics_filled: usize,
+    unchanged: usize,
+    ambiguous: usize,
+    invalid: usize,
+    unidentified: usize,
     covers_failed: usize,
 }
 
@@ -130,7 +128,7 @@ pub async fn migrate(
         .timeout(Duration::from_secs(30))
         .user_agent("ReinaMigrator/Playnite")
         .build()?;
-    let mut identities = load_existing_identities(db).await?;
+    let mut identities = TargetIndex::load(db).await?;
     let transaction = db.begin().await?;
     let mut created_cover_files = Vec::new();
 
@@ -151,8 +149,14 @@ pub async fn migrate(
                 return Err(error.into());
             }
             println!(
-                "Playnite 迁移结果：导入 {}，跳过 {}，封面失败 {}",
-                summary.imported, summary.skipped, summary.covers_failed
+                "Playnite 迁移结果：新建 {}，补统计 {}，未修改 {}，匹配歧义 {}，无效 {}，无标识新建 {}，封面失败 {}",
+                summary.imported,
+                summary.statistics_filled,
+                summary.unchanged,
+                summary.ambiguous,
+                summary.invalid,
+                summary.unidentified,
+                summary.covers_failed
             );
             Ok(())
         }
@@ -169,7 +173,7 @@ async fn migrate_games<C: ConnectionTrait>(
     db: &C,
     client: &reqwest::Client,
     covers_root: &Path,
-    identities: &mut HashSet<GameIdentity>,
+    identities: &mut TargetIndex,
     created_cover_files: &mut Vec<PathBuf>,
 ) -> Result<MigrationSummary> {
     let mut summary = MigrationSummary::default();
@@ -177,15 +181,50 @@ async fn migrate_games<C: ConnectionTrait>(
     for game in games {
         let Some(name) = non_empty(&game.name) else {
             eprintln!("跳过名称为空的 Playnite 游戏，导出 ID: {}", game.id);
-            summary.skipped += 1;
+            summary.invalid += 1;
             continue;
         };
         let launch = resolve_launch_fields(game);
-        let identity = build_identity(&launch, name);
-        if identities.contains(&identity) {
-            println!("跳过重复游戏: {name}");
-            summary.skipped += 1;
-            continue;
+        let keys = dedup::identities(
+            launch.steam_launch_id.as_deref(),
+            launch.localpath.as_deref(),
+            launch.executable.as_deref(),
+        );
+        match identities.find(&keys) {
+            MatchResult::Unique(game_id) => {
+                let filled = if let Some(statistics) = build_statistics(game) {
+                    if statistics.total_time > 0 {
+                        StatisticsSlot::load(db, game_id)
+                            .await?
+                            .write(db, game_id, statistics)
+                            .await?
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if filled {
+                    summary.statistics_filled += 1;
+                    println!("已补充重复游戏的游玩统计: {name}（目标 ID {game_id}）");
+                } else {
+                    summary.unchanged += 1;
+                    println!(
+                        "重复游戏未修改: {name}（目标 ID {game_id}，已有统计或来源无有效时长）"
+                    );
+                }
+                continue;
+            }
+            MatchResult::Ambiguous => {
+                summary.ambiguous += 1;
+                eprintln!("游戏 {name} 匹配到多个 ReinaManager 条目，跳过以避免误合并");
+                continue;
+            }
+            MatchResult::Missing => {}
+        }
+        if keys.is_empty() {
+            summary.unidentified += 1;
+            eprintln!("游戏 {name} 没有 Steam ID 或完整启动路径，再次迁移可能重复导入");
         }
         if game
             .play_action
@@ -218,19 +257,22 @@ async fn migrate_games<C: ConnectionTrait>(
         .insert(db)
         .await
         .with_context(|| format!("写入 Playnite 游戏失败: {name}"))?;
+        let inserted_id = inserted.id;
 
-        if let Some(statistics) = build_statistics(game, inserted.id) {
-            statistics.insert(db).await?;
+        if let Some(statistics) = build_statistics(game) {
+            StatisticsSlot::Vacant
+                .write(db, inserted_id, statistics)
+                .await?;
         }
 
         if let Some(cover) = non_empty(&game.cover) {
-            match import_cover(client, cover, covers_root, inserted.id).await {
+            match import_cover(client, cover, covers_root, inserted_id).await {
                 Ok((identifier, cover_file)) => {
+                    created_cover_files.push(cover_file);
                     custom_data.image = Some(identifier);
                     let mut active = inserted.into_active_model();
                     active.custom_data = Set(Some(serde_json::to_string(&custom_data)?));
                     active.update(db).await?;
-                    created_cover_files.push(cover_file);
                 }
                 Err(error) => {
                     eprintln!("游戏 {name} 的封面迁移失败，将保留游戏资料：{error}");
@@ -239,7 +281,7 @@ async fn migrate_games<C: ConnectionTrait>(
             }
         }
 
-        identities.insert(identity);
+        identities.insert(inserted_id, &keys);
         summary.imported += 1;
         println!("已迁移游戏: {name}");
     }
@@ -247,59 +289,9 @@ async fn migrate_games<C: ConnectionTrait>(
     Ok(summary)
 }
 
-async fn load_existing_identities(db: &DatabaseConnection) -> Result<HashSet<GameIdentity>> {
-    let rows = db
-        .query_all(Statement::from_string(
-            DatabaseBackend::Sqlite,
-            r#"
-            SELECT
-                id_type,
-                localpath,
-                executable,
-                steam_launch_id,
-                CASE WHEN json_valid(custom_data)
-                    THEN json_extract(custom_data, '$.name')
-                    ELSE NULL
-                END AS custom_name
-            FROM games
-            "#
-            .to_string(),
-        ))
-        .await?;
-    let mut identities = HashSet::new();
-
-    for row in rows {
-        let steam_id: Option<String> = row.try_get("", "steam_launch_id")?;
-        if let Some(steam_id) = steam_id.and_then(|value| normalize_steam_id(&value)) {
-            identities.insert(GameIdentity::Steam(steam_id));
-            continue;
-        }
-
-        let localpath: Option<String> = row.try_get("", "localpath")?;
-        let executable: Option<String> = row.try_get("", "executable")?;
-        if let (Some(localpath), Some(executable)) = (localpath, executable) {
-            identities.insert(GameIdentity::Local(
-                normalize_path(&localpath),
-                executable.trim().to_lowercase(),
-            ));
-            continue;
-        }
-
-        let id_type: String = row.try_get("", "id_type")?;
-        let custom_name: Option<String> = row.try_get("", "custom_name")?;
-        if id_type == "Playnite" {
-            if let Some(name) = custom_name.and_then(|value| non_empty_owned(&value)) {
-                identities.insert(GameIdentity::Pathless(name.to_lowercase()));
-            }
-        }
-    }
-
-    Ok(identities)
-}
-
 fn resolve_launch_fields(game: &ExportGame) -> LaunchFields {
     if game.source.to_lowercase().contains("steam") {
-        if let Some(steam_launch_id) = normalize_steam_id(&game.provider_id) {
+        if let Some(steam_launch_id) = dedup::normalize_steam_id(&game.provider_id) {
             return LaunchFields {
                 localpath: non_empty_owned(&game.install_directory),
                 executable: None,
@@ -356,16 +348,6 @@ fn resolve_executable_path(
         .or_else(|| install_directory.map(PathBuf::from))
         .unwrap_or_else(|| PathBuf::from("."));
     Some(base.join(action_path))
-}
-
-fn build_identity(launch: &LaunchFields, name: &str) -> GameIdentity {
-    if let Some(steam_id) = &launch.steam_launch_id {
-        return GameIdentity::Steam(steam_id.clone());
-    }
-    if let (Some(localpath), Some(executable)) = (&launch.localpath, &launch.executable) {
-        return GameIdentity::Local(normalize_path(localpath), executable.trim().to_lowercase());
-    }
-    GameIdentity::Pathless(name.trim().to_lowercase())
 }
 
 fn build_custom_data(game: &ExportGame) -> CustomData {
@@ -438,10 +420,7 @@ fn map_play_status(status: &str) -> i32 {
     }
 }
 
-fn build_statistics(
-    game: &ExportGame,
-    game_id: i32,
-) -> Option<reina::game_statistics::ActiveModel> {
+fn build_statistics(game: &ExportGame) -> Option<ImportedStatistics> {
     if game.playtime_seconds == 0 && game.play_count == 0 && game.last_activity.is_none() {
         return None;
     }
@@ -450,12 +429,11 @@ fn build_statistics(
     let total_time = i32::try_from(rounded_minutes).ok()?;
     let session_count = i32::try_from(game.play_count).ok()?;
 
-    Some(reina::game_statistics::ActiveModel {
-        game_id: Set(game_id),
-        total_time: Set(Some(total_time)),
-        session_count: Set(Some(session_count)),
-        last_played: Set(timestamp_i32(game.last_activity.as_ref())),
-        daily_stats: Set(Some("[]".to_string())),
+    Some(ImportedStatistics {
+        total_time,
+        session_count,
+        last_played: timestamp_i32(game.last_activity.as_ref()),
+        daily_stats: "[]".to_string(),
     })
 }
 
@@ -571,23 +549,6 @@ fn set_i32_or_default(value: Option<i32>) -> ActiveValue<Option<i32>> {
     value.map_or(NotSet, |value| Set(Some(value)))
 }
 
-fn normalize_steam_id(value: &str) -> Option<String> {
-    value
-        .trim()
-        .parse::<u64>()
-        .ok()
-        .filter(|id| *id > 0)
-        .map(|id| id.to_string())
-}
-
-fn normalize_path(value: &str) -> String {
-    value
-        .trim()
-        .trim_end_matches(['\\', '/'])
-        .replace('/', "\\")
-        .to_lowercase()
-}
-
 fn join_non_empty(values: &[String]) -> Option<String> {
     let values: Vec<&str> = values.iter().filter_map(|value| non_empty(value)).collect();
     (!values.is_empty()).then(|| values.join(", "))
@@ -604,9 +565,8 @@ fn non_empty_owned(value: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        map_play_status, migrate, normalize_steam_id, resolve_launch_fields, validate_target_schema,
-    };
+    use super::super::dedup::normalize_steam_id;
+    use super::{map_play_status, migrate, resolve_launch_fields, validate_target_schema};
     use crate::playnite::{ExportDocument, ExportGame, ExportPlayAction};
     use chrono::{TimeZone, Utc};
     use sea_orm::{ConnectionTrait, Database, DatabaseBackend, Statement};
@@ -851,6 +811,216 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(count.try_get::<i64>("", "count").unwrap(), 1);
+
+        database.close().await.unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn fills_only_empty_statistics_on_a_matching_existing_game() {
+        let directory = temporary_directory();
+        let (database, database_url) = create_target_database(&directory).await;
+        database
+            .execute_unprepared(
+                r#"INSERT INTO games (id, id_type, localpath, executable, savepath, custom_data)
+                   VALUES (7, 'Whitecloud', 'd:\games\example\', 'EXAMPLE.EXE', 'D:\Saves', '{"name":"Existing"}');
+                   INSERT INTO game_statistics (game_id, total_time, session_count, last_played, daily_stats)
+                   VALUES (7, 0, 0, 123, '[]');"#,
+            )
+            .await
+            .unwrap();
+
+        let mut document = sample_document(std::path::Path::new("unused.png"));
+        document.games[0].cover.clear();
+        migrate(document, &database, &database_url).await.unwrap();
+
+        let game = database
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT * FROM games WHERE id = 7".to_string(),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(game.try_get::<String>("", "savepath").unwrap(), r"D:\Saves");
+        assert_eq!(
+            game.try_get::<String>("", "custom_data").unwrap(),
+            r#"{"name":"Existing"}"#
+        );
+        let statistics = database
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT * FROM game_statistics WHERE game_id = 7".to_string(),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(statistics.try_get::<i32>("", "total_time").unwrap(), 61);
+        assert_eq!(statistics.try_get::<i32>("", "session_count").unwrap(), 4);
+        assert_eq!(statistics.try_get::<i32>("", "last_played").unwrap(), 123);
+
+        let mut later = sample_document(std::path::Path::new("unused.png"));
+        later.games[0].cover.clear();
+        later.games[0].playtime_seconds = 9_000;
+        migrate(later, &database, &database_url).await.unwrap();
+        let count = database
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT COUNT(*) AS count FROM games".to_string(),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(count.try_get::<i64>("", "count").unwrap(), 1);
+        let statistics = database
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT total_time FROM game_statistics WHERE game_id = 7".to_string(),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(statistics.try_get::<i32>("", "total_time").unwrap(), 61);
+
+        database.close().await.unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn does_not_fill_statistics_when_the_target_has_sessions() {
+        let directory = temporary_directory();
+        let (database, database_url) = create_target_database(&directory).await;
+        database
+            .execute_unprepared(
+                r#"INSERT INTO games (id, id_type, localpath, executable)
+                   VALUES (7, 'Whitecloud', 'D:\Games\Example', 'Example.exe');
+                   INSERT INTO game_sessions (game_id, start_time, end_time, duration, date)
+                   VALUES (7, 100, 160, 1, '2026-01-01');"#,
+            )
+            .await
+            .unwrap();
+        let mut document = sample_document(std::path::Path::new("unused.png"));
+        document.games[0].cover.clear();
+        migrate(document, &database, &database_url).await.unwrap();
+
+        let statistics = database
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT * FROM game_statistics WHERE game_id = 7".to_string(),
+            ))
+            .await
+            .unwrap();
+        assert!(statistics.is_none());
+
+        database.close().await.unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn imports_games_without_a_strong_identity_each_time() {
+        let directory = temporary_directory();
+        let (database, database_url) = create_target_database(&directory).await;
+        let mut document = sample_document(std::path::Path::new("unused.png"));
+        document.games[0].cover.clear();
+        document.games[0].install_directory.clear();
+        document.games[0].play_action = None;
+        let mut repeated = sample_document(std::path::Path::new("unused.png"));
+        repeated.games[0].cover.clear();
+        repeated.games[0].install_directory.clear();
+        repeated.games[0].play_action = None;
+        migrate(document, &database, &database_url).await.unwrap();
+        migrate(repeated, &database, &database_url).await.unwrap();
+
+        let count = database
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT COUNT(*) AS count FROM games".to_string(),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(count.try_get::<i64>("", "count").unwrap(), 2);
+
+        database.close().await.unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn fills_empty_statistics_by_steam_id() {
+        let directory = temporary_directory();
+        let (database, database_url) = create_target_database(&directory).await;
+        database
+            .execute_unprepared(
+                "INSERT INTO games (id, id_type, steam_launch_id) VALUES (7, 'custom', '000730')",
+            )
+            .await
+            .unwrap();
+        let mut document = sample_document(std::path::Path::new("unused.png"));
+        document.games[0].source = "Steam".to_string();
+        document.games[0].provider_id = "730".to_string();
+        document.games[0].cover.clear();
+
+        migrate(document, &database, &database_url).await.unwrap();
+
+        let count = database
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT COUNT(*) AS count FROM games".to_string(),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(count.try_get::<i64>("", "count").unwrap(), 1);
+        let statistics = database
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT total_time FROM game_statistics WHERE game_id = 7".to_string(),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(statistics.try_get::<i32>("", "total_time").unwrap(), 61);
+
+        database.close().await.unwrap();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn skips_an_ambiguous_existing_path() {
+        let directory = temporary_directory();
+        let (database, database_url) = create_target_database(&directory).await;
+        database
+            .execute_unprepared(
+                r#"INSERT INTO games (id, id_type, localpath, executable)
+                   VALUES (7, 'custom', 'D:\Games\Example', 'Example.exe');
+                   INSERT INTO games (id, id_type, localpath, executable)
+                   VALUES (8, 'custom', 'd:\games\example', 'EXAMPLE.EXE');"#,
+            )
+            .await
+            .unwrap();
+        let mut document = sample_document(std::path::Path::new("unused.png"));
+        document.games[0].cover.clear();
+
+        migrate(document, &database, &database_url).await.unwrap();
+
+        let count = database
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT COUNT(*) AS count FROM games".to_string(),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(count.try_get::<i64>("", "count").unwrap(), 2);
+        let statistics = database
+            .query_one(Statement::from_string(
+                DatabaseBackend::Sqlite,
+                "SELECT COUNT(*) AS count FROM game_statistics".to_string(),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(statistics.try_get::<i64>("", "count").unwrap(), 0);
 
         database.close().await.unwrap();
         fs::remove_dir_all(directory).unwrap();
