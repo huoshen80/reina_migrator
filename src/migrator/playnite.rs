@@ -113,7 +113,7 @@ pub async fn migrate(
     db: &DatabaseConnection,
     database_url: &str,
 ) -> Result<()> {
-    println!(
+    crate::log_info!(
         "读取到 {} 个 Playnite 游戏（Playnite {}，导出于 {}）",
         document.games.len(),
         document.playnite_version,
@@ -148,7 +148,7 @@ pub async fn migrate(
                 cleanup_cover_files(&created_cover_files);
                 return Err(error.into());
             }
-            println!(
+            crate::log_info!(
                 "Playnite 迁移结果：新建 {}，补统计 {}，未修改 {}，匹配歧义 {}，无效 {}，无标识新建 {}，封面失败 {}",
                 summary.imported,
                 summary.statistics_filled,
@@ -180,7 +180,7 @@ async fn migrate_games<C: ConnectionTrait>(
 
     for game in games {
         let Some(name) = non_empty(&game.name) else {
-            eprintln!("跳过名称为空的 Playnite 游戏，导出 ID: {}", game.id);
+            crate::log_warn!("跳过名称为空的 Playnite 游戏，导出 ID: {}", game.id);
             summary.invalid += 1;
             continue;
         };
@@ -206,10 +206,10 @@ async fn migrate_games<C: ConnectionTrait>(
                 };
                 if filled {
                     summary.statistics_filled += 1;
-                    println!("已补充重复游戏的游玩统计: {name}（目标 ID {game_id}）");
+                    crate::log_info!("已补充重复游戏的游玩统计: {name}（目标 ID {game_id}）");
                 } else {
                     summary.unchanged += 1;
-                    println!(
+                    crate::log_info!(
                         "重复游戏未修改: {name}（目标 ID {game_id}，已有统计或来源无有效时长）"
                     );
                 }
@@ -217,21 +217,21 @@ async fn migrate_games<C: ConnectionTrait>(
             }
             MatchResult::Ambiguous => {
                 summary.ambiguous += 1;
-                eprintln!("游戏 {name} 匹配到多个 ReinaManager 条目，跳过以避免误合并");
+                crate::log_warn!("游戏 {name} 匹配到多个 ReinaManager 条目，跳过以避免误合并");
                 continue;
             }
             MatchResult::Missing => {}
         }
         if keys.is_empty() {
             summary.unidentified += 1;
-            eprintln!("游戏 {name} 没有 Steam ID 或完整启动路径，再次迁移可能重复导入");
+            crate::log_warn!("游戏 {name} 没有 Steam ID 或完整启动路径，再次迁移可能重复导入");
         }
         if game
             .play_action
             .as_ref()
             .is_some_and(|action| !action.arguments.trim().is_empty())
         {
-            eprintln!("游戏 {name} 的启动参数无法写入 ReinaManager，将忽略该参数");
+            crate::log_warn!("游戏 {name} 的启动参数无法写入 ReinaManager，将忽略该参数");
         }
 
         let mut custom_data = build_custom_data(game);
@@ -275,7 +275,7 @@ async fn migrate_games<C: ConnectionTrait>(
                     active.update(db).await?;
                 }
                 Err(error) => {
-                    eprintln!("游戏 {name} 的封面迁移失败，将保留游戏资料：{error}");
+                    crate::log_warn!("游戏 {name} 的封面迁移失败，将保留游戏资料：{error}");
                     summary.covers_failed += 1;
                 }
             }
@@ -283,7 +283,7 @@ async fn migrate_games<C: ConnectionTrait>(
 
         identities.insert(inserted_id, &keys);
         summary.imported += 1;
-        println!("已迁移游戏: {name}");
+        crate::log_info!("已迁移游戏: {name}");
     }
 
     Ok(summary)
@@ -525,7 +525,7 @@ fn extension_from_content_type(content_type: &str) -> Option<&'static str> {
 fn cleanup_cover_files(files: &[PathBuf]) {
     for file in files {
         if let Err(error) = fs::remove_file(file) {
-            eprintln!("回滚时无法删除封面 {}：{error}", file.display());
+            crate::log_warn!("回滚时无法删除封面 {}：{error}", file.display());
             continue;
         }
         if let Some(parent) = file.parent() {

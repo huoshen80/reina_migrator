@@ -23,7 +23,7 @@ pub async fn backup_database(db: &DatabaseConnection, db_url: &str) -> Result<Pa
     let custom_dir = read_custom_backup_dir(db).await;
 
     let backup_path = create_backup_with_fallback(db, custom_dir.as_deref(), &default_dir).await?;
-    println!("已备份数据库到: {}", backup_path.display());
+    crate::log_info!("已备份数据库到: {}", backup_path.display());
     Ok(backup_path)
 }
 
@@ -42,7 +42,7 @@ async fn read_custom_backup_dir(db: &DatabaseConnection) -> Option<PathBuf> {
     let row = match db.query_one(statement).await {
         Ok(row) => row,
         Err(error) => {
-            eprintln!("无法读取数据库备份目录设置，将使用默认目录：{error}");
+            crate::log_warn!("无法读取数据库备份目录设置，将使用默认目录：{error}");
             return None;
         }
     }?;
@@ -50,7 +50,7 @@ async fn read_custom_backup_dir(db: &DatabaseConnection) -> Option<PathBuf> {
     let custom_path = match row.try_get::<Option<String>>("", "db_backup_path") {
         Ok(path) => path,
         Err(error) => {
-            eprintln!("无法解析数据库备份目录设置，将使用默认目录：{error}");
+            crate::log_warn!("无法解析数据库备份目录设置，将使用默认目录：{error}");
             return None;
         }
     }?;
@@ -63,7 +63,7 @@ async fn read_custom_backup_dir(db: &DatabaseConnection) -> Option<PathBuf> {
     if custom_dir.is_dir() {
         Some(custom_dir)
     } else {
-        eprintln!(
+        crate::log_warn!(
             "自定义数据库备份目录无效，将使用默认目录：{}",
             custom_dir.display()
         );
@@ -79,7 +79,7 @@ async fn create_backup_with_fallback(
     if let Some(custom_dir) = custom_dir {
         match create_verified_backup(db, custom_dir).await {
             Ok(backup_path) => return Ok(backup_path),
-            Err(error) => eprintln!(
+            Err(error) => crate::log_warn!(
                 "无法备份到自定义目录 {}，将回退到默认目录：{error}",
                 custom_dir.display()
             ),

@@ -89,7 +89,7 @@ pub async fn run_migration_to(new_database_path: &str) -> Result<()> {
 
 /// 将指定来源迁移到 ReinaManager 数据库。
 pub async fn run_migration_from_to(source: MigrationSource, new_database_path: &str) -> Result<()> {
-    println!("Reina Migrator - 数据迁移工具");
+    crate::log_info!("Reina Migrator - 数据迁移工具");
 
     // 1. 在等待用户关闭程序前再次校验目标数据库，避免选择后路径发生变化
     Config::validate_database_url(new_database_path)?;
@@ -102,12 +102,14 @@ pub async fn run_migration_from_to(source: MigrationSource, new_database_path: &
 
     // 2. 等待用户手动关闭 ReinaManager，避免丢失尚未保存的数据
     match process::wait_for_reina_manager_exit()? {
-        process::ProcessStatus::AlreadyStopped => {}
+        process::ProcessStatus::AlreadyStopped => {
+            tracing::info!("ReinaManager 未运行，可以开始迁移");
+        }
         process::ProcessStatus::StoppedAfterPrompt => {
-            println!("ReinaManager 已退出，继续迁移。");
+            crate::log_info!("ReinaManager 已退出，继续迁移。");
         }
         process::ProcessStatus::Cancelled => {
-            println!("迁移已取消，目标数据库未修改。");
+            crate::log_info!("迁移已取消，目标数据库未修改。");
             pause_before_exit()?;
             return Ok(());
         }
@@ -115,16 +117,16 @@ pub async fn run_migration_from_to(source: MigrationSource, new_database_path: &
 
     match &source {
         MigrationSource::Whitecloud => {
-            println!("Whitecloud 数据库: {}", Config::old_database_path()?)
+            crate::log_info!("Whitecloud 数据库: {}", Config::old_database_path()?)
         }
         MigrationSource::Playnite { export_path } => {
-            println!("Playnite 导出文件: {}", export_path.display())
+            crate::log_info!("Playnite 导出文件: {}", export_path.display())
         }
     }
-    println!("ReinaManager 数据库: {}", new_database_path);
+    crate::log_info!("ReinaManager 数据库: {}", new_database_path);
 
     // 3. 连接数据库
-    println!("连接数据库...");
+    crate::log_info!("连接数据库...");
     let new_db = connect_new_db(new_database_path).await?;
 
     if matches!(source, MigrationSource::Playnite { .. }) {
@@ -135,7 +137,7 @@ pub async fn run_migration_from_to(source: MigrationSource, new_database_path: &
     backup::backup_database(&new_db, new_database_path).await?;
 
     // 5. 执行数据迁移
-    println!("开始数据迁移...");
+    crate::log_info!("开始数据迁移...");
     match source {
         MigrationSource::Whitecloud => {
             let old_database_path = Config::old_database_path()?;
@@ -154,10 +156,10 @@ pub async fn run_migration_from_to(source: MigrationSource, new_database_path: &
     }
 
     // 6. 关闭数据库连接
-    println!("关闭数据库连接...");
+    crate::log_info!("关闭数据库连接...");
     new_db.close().await?;
 
-    println!("🎉 数据迁移完成！");
+    crate::log_info!("🎉 数据迁移完成！");
     println!();
     println!("现在您可以重新启动 ReinaManager 查看迁移的数据。");
     pause_before_exit()?;
@@ -180,7 +182,7 @@ async fn migrate_games(old_db: &DatabaseConnection, new_db: &DatabaseConnection)
         .order_by_asc(whitecloud::games::Column::Id)
         .all(old_db)
         .await?;
-    println!("找到 {} 个游戏需要迁移", old_games.len());
+    crate::log_info!("找到 {} 个 Whitecloud 游戏需要迁移", old_games.len());
 
     let preloaded = PreloadedData::load(old_db).await?;
     let groups = group_whitecloud_games(&old_games);
@@ -210,7 +212,7 @@ async fn migrate_games(old_db: &DatabaseConnection, new_db: &DatabaseConnection)
                 .iter()
                 .any(|path| dedup::normalize_path(path) != dedup::normalize_path(first))
             {
-                eprintln!(
+                crate::log_warn!(
                     "Whitecloud 游戏 {:?} 有冲突的存档路径，本次不补存档路径",
                     name
                 );
@@ -250,9 +252,9 @@ async fn migrate_games(old_db: &DatabaseConnection, new_db: &DatabaseConnection)
                     unchanged += 1;
                 }
                 if changed {
-                    println!("已补充 Whitecloud 游戏: {:?}（目标 ID {game_id}）", name);
+                    crate::log_info!("已补充 Whitecloud 游戏: {:?}（目标 ID {game_id}）", name);
                 } else {
-                    println!(
+                    crate::log_info!(
                         "重复 Whitecloud 游戏未修改: {:?}（目标 ID {game_id}）",
                         name
                     );
@@ -260,7 +262,7 @@ async fn migrate_games(old_db: &DatabaseConnection, new_db: &DatabaseConnection)
             }
             MatchResult::Ambiguous => {
                 ambiguous += 1;
-                eprintln!(
+                crate::log_warn!(
                     "Whitecloud 游戏 {:?} 匹配到多个 ReinaManager 条目，跳过以避免误合并",
                     name
                 );
@@ -268,7 +270,7 @@ async fn migrate_games(old_db: &DatabaseConnection, new_db: &DatabaseConnection)
             MatchResult::Missing => {
                 if keys.is_empty() {
                     unidentified += 1;
-                    eprintln!(
+                    crate::log_warn!(
                         "Whitecloud 游戏 {:?} 没有完整启动路径，再次迁移可能重复导入",
                         name
                     );
@@ -295,16 +297,17 @@ async fn migrate_games(old_db: &DatabaseConnection, new_db: &DatabaseConnection)
                 identities.insert(inserted.id, &keys);
                 migrate_group_sessions(&txn, &group, &preloaded, inserted.id).await?;
                 imported += 1;
-                println!(
+                crate::log_info!(
                     "已迁移 Whitecloud 游戏: {:?}（目标 ID {}）",
-                    name, inserted.id
+                    name,
+                    inserted.id
                 );
             }
         }
     }
 
     txn.commit().await?;
-    println!(
+    crate::log_info!(
         "Whitecloud 迁移结果：新建 {imported}，补统计 {statistics_filled}，补存档路径 {savepaths_filled}，未修改 {unchanged}，匹配歧义 {ambiguous}，无标识新建 {unidentified}"
     );
     Ok(())

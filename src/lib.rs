@@ -1,5 +1,6 @@
 pub mod config;
 pub mod db;
+pub mod logging;
 pub mod migrator;
 pub mod playnite;
 pub mod reina;
