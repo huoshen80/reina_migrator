@@ -1,41 +1,70 @@
 # Reina Migrator - 为ReinaManager提供的数据迁移工具
 
-这是一个用于将 Whitecloud v0.4.0 数据迁移到ReinaManager的工具。
+这是一个用于将 Whitecloud 或 Playnite 游戏数据迁移到 ReinaManager 的工具。
 
 ## 适用于
-- ReinaManager v0.25.0 及以上版本
+- ReinaManager v0.29.1 及以上版本
 - Whitecloud v0.4.0 数据库结构
+- 由 Reina Exporter 导出的 Playnite 10 游戏库
 
 ## 功能特性
 
 - 使用 SeaORM 进行数据库操作
 - 支持 SQLite 数据库
 - 自动迁移游戏数据、会话记录和统计信息
+- 支持 ReinaManager 安装版与便携版
+- 支持迁移 Playnite 元数据、启动配置、累计统计和封面
 
 ## 使用
 
 准备工作：
-- 找到 `db.3.sqlite` 文件，它一般位于 `whitecloud安装路径\resources\data\db.3.sqlite`
-- 将 `db.3.sqlite` 放在程序同一目录
-- 至少启动过一次 ReinaManager，确保目标数据库已经存在
+
+- 至少启动过一次 ReinaManager，确保目标数据库已经存在。
+- 从 Whitecloud 迁移时，找到 `db.3.sqlite`（一般位于 `whitecloud安装路径\resources\data\db.3.sqlite`），并将其放在迁移器同一目录。
+- 从 Playnite 迁移时，安装独立项目 `Reina-Playnite-Exporter` 生成的 Reina Exporter 插件，在 Playnite 的扩展菜单选择 `Export library for ReinaManager`，保存 JSON 文件。在完成迁移前不要移动或删除 Playnite 的封面文件。
 
 运行：
 
 1. 双击可执行文件运行。
 
-2. 选择 ReinaManager 版本：
+2. 选择迁移来源：Whitecloud 或 Playnite。选择 Playnite 时，在文件窗口中选择 Reina Exporter 生成的 JSON。
+
+3. 选择 ReinaManager 版本：
    - 安装版：输入 `1` 或直接按 Enter。
    - 便携版：输入 `2`，然后在弹出的目录窗口中选择包含 ReinaManager 的根目录。
 
-3. 程序在迁移前会备份数据库到 ReinaManager 设置的数据库备份目录；未设置或目录无效时，保存到目标数据库同目录下的 `backups/` 文件夹。文件名格式类似：
+4. 如果 ReinaManager 正在运行，请先保存数据并手动退出。按 Enter 重新检测；输入 `0` 可取消迁移。
+
+5. 程序在迁移前会备份数据库到 ReinaManager 设置的数据库备份目录；未设置或目录无效时，保存到目标数据库同目录下的 `backups/` 文件夹。文件名格式类似：
 
    `reina_manager_20250820_154719_178.db`
 
-4. 迁移完成后，程序会提示按任意键退出。
+6. 迁移完成后，程序会提示按 Enter 退出。
 
-注意：请在迁移前确保已保存 ReinaManager 中的所有未保存数据，迁移期间将尝试关闭 ReinaManager 进程以保证数据库完整性。
-
+注意：迁移器不会关闭 ReinaManager 进程。请在迁移前手动退出 ReinaManager，以保证数据库完整性。
 ## 数据映射关系
+
+### Playnite -> ReinaManager
+
+- `games.id_type` 固定为 `Playnite`，不写入 `game_sources`。
+- 名称、排序名称、简介、标签、开发商、用户评分、用户评价和成人标记写入 `custom_data`。
+- 发行日期、添加时间、修改时间和五种游玩状态写入 `games` 对应字段。
+- Steam 游戏写入 Steam AppID；本地游戏写入展开后的目录和启动文件名。无可表示启动项的游戏仍会导入资料。
+- 累计游玩秒数、次数和最近游玩时间写入 `game_statistics`，不会伪造 `game_sessions`。因为 Playnite 不提供逐次会话，ReinaManager 将来若主动重建统计，导入的累计基线可能被清除。
+- 重复项按 Steam AppID、本地启动项或无启动项游戏名称跳过，不覆盖 ReinaManager 中已有资料。
+- 本地或 HTTP(S) 封面会复制到 ReinaManager 的封面目录；单个封面失败不会中止游戏迁移。
+- ReinaManager v0.29.1 当前尚未把 `Playnite` 纳入“自定义游戏”筛选，但游戏仍会正常出现在全部游戏和本地游戏中。
+
+Playnite 状态映射：
+
+| Playnite | ReinaManager | `clear` |
+|---|---|---:|
+| Not Played、Plan to Play | 想玩 | 1 |
+| Played、Beaten、Completed | 玩过 | 2 |
+| Playing | 在玩 | 3 |
+| On Hold | 搁置 | 4 |
+| Abandoned | 抛弃 | 5 |
+| 其他自定义状态 | 想玩 | 1 |
 
 ### 旧数据库 -> 新数据库
 

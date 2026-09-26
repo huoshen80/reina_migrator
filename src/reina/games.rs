@@ -10,14 +10,26 @@ pub struct Model {
     #[sea_orm(column_type = "Text")]
     pub id_type: String,
     #[sea_orm(column_type = "Text", nullable)]
+    pub date: Option<String>,
+    #[sea_orm(column_type = "Text", nullable)]
     pub localpath: Option<String>,
     #[sea_orm(column_type = "Text", nullable)]
     pub executable: Option<String>,
+    #[sea_orm(column_type = "Text")]
+    pub launch_type: String,
+    #[sea_orm(column_type = "Text", nullable)]
+    pub steam_launch_id: Option<String>,
     #[sea_orm(column_type = "Text", nullable)]
     pub savepath: Option<String>,
+    pub autosave: Option<i32>,
+    pub maxbackups: Option<i32>,
     pub clear: Option<i32>,
+    pub le_launch: Option<i32>,
+    pub magpie: Option<i32>,
     #[sea_orm(column_type = "Text", nullable)]
     pub custom_data: Option<String>,
+    pub created_at: Option<i32>,
+    pub updated_at: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -49,7 +61,7 @@ mod tests {
     use sea_orm::{ActiveModelTrait, ConnectionTrait, Database, DatabaseBackend, Statement};
 
     #[tokio::test]
-    async fn inserts_into_the_reina_manager_v025_games_schema() {
+    async fn inserts_into_the_reina_manager_v029_games_schema() {
         let database = Database::connect("sqlite::memory:").await.unwrap();
         database
             .execute_unprepared(
@@ -59,6 +71,8 @@ mod tests {
                     id_type TEXT NOT NULL,
                     date TEXT,
                     localpath TEXT,
+                    launch_type TEXT NOT NULL DEFAULT 'local',
+                    steam_launch_id TEXT,
                     savepath TEXT,
                     autosave INTEGER DEFAULT 0,
                     clear INTEGER DEFAULT 0,
@@ -81,11 +95,20 @@ mod tests {
         ActiveModel {
             id: NotSet,
             id_type: Set("Whitecloud".to_string()),
+            date: NotSet,
             localpath: Set(Some(r"D:\Games\Foo".to_string())),
             executable: Set(Some("Foo.exe".to_string())),
+            launch_type: NotSet,
+            steam_launch_id: NotSet,
             savepath: Set(Some(r"D:\Games\Foo\savedata".to_string())),
+            autosave: NotSet,
+            maxbackups: NotSet,
             clear: Set(Some(1)),
+            le_launch: NotSet,
+            magpie: NotSet,
             custom_data: Set(Some(r#"{"name":"Foo"}"#.to_string())),
+            created_at: NotSet,
+            updated_at: NotSet,
         }
         .insert(&database)
         .await

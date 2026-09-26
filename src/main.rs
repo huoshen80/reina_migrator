@@ -1,6 +1,15 @@
 use anyhow::Result;
-use reina_migrator::{config::Config, migrator};
+use reina_migrator::{
+    config::Config,
+    migrator::{self, MigrationSource},
+};
 use std::io::{self, Write};
+
+#[derive(Debug, PartialEq, Eq)]
+enum SourceChoice {
+    Whitecloud,
+    Playnite,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum TargetChoice {
@@ -13,6 +22,45 @@ fn parse_target_choice(input: &str) -> Option<TargetChoice> {
         "" | "1" => Some(TargetChoice::Installed),
         "2" => Some(TargetChoice::Portable),
         _ => None,
+    }
+}
+
+fn parse_source_choice(input: &str) -> Option<SourceChoice> {
+    match input.trim() {
+        "" | "1" => Some(SourceChoice::Whitecloud),
+        "2" => Some(SourceChoice::Playnite),
+        _ => None,
+    }
+}
+
+fn select_migration_source() -> Result<MigrationSource> {
+    loop {
+        println!("请选择迁移来源：");
+        println!("1. Whitecloud（默认）");
+        println!("2. Playnite");
+        print!("请输入选项 [1]: ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input)? == 0 {
+            return Err(anyhow::anyhow!("标准输入已关闭"));
+        }
+
+        match parse_source_choice(&input) {
+            Some(SourceChoice::Whitecloud) => return Ok(MigrationSource::Whitecloud),
+            Some(SourceChoice::Playnite) => {
+                let dialog = rfd::FileDialog::new()
+                    .set_title("选择 Reina Exporter 导出的 Playnite JSON")
+                    .add_filter("Reina Playnite JSON", &["json"]);
+                if let Some(export_path) = dialog.pick_file() {
+                    return Ok(MigrationSource::Playnite { export_path });
+                }
+                println!("已取消文件选择，返回来源菜单。");
+            }
+            None => eprintln!("无效选项，请输入 1、2，或直接按 Enter。"),
+        }
+
+        println!();
     }
 }
 
@@ -70,13 +118,26 @@ fn select_target_database() -> Result<String> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let source = select_migration_source()?;
     let new_database_path = select_target_database()?;
-    migrator::run_migration_to(&new_database_path).await
+    migrator::run_migration_from_to(source, &new_database_path).await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_target_choice, TargetChoice};
+    use super::{parse_source_choice, parse_target_choice, SourceChoice, TargetChoice};
+
+    #[test]
+    fn defaults_to_whitecloud_for_blank_source_input() {
+        assert_eq!(parse_source_choice("  \n"), Some(SourceChoice::Whitecloud));
+    }
+
+    #[test]
+    fn parses_the_supported_source_choices() {
+        assert_eq!(parse_source_choice("1"), Some(SourceChoice::Whitecloud));
+        assert_eq!(parse_source_choice("2"), Some(SourceChoice::Playnite));
+        assert_eq!(parse_source_choice("3"), None);
+    }
 
     #[test]
     fn defaults_to_the_installed_version_for_blank_input() {

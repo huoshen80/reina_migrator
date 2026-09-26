@@ -4,6 +4,7 @@
 
 mod backup;
 mod convert;
+mod playnite;
 mod process;
 
 use anyhow::Result;
@@ -12,6 +13,7 @@ use sea_orm::ActiveValue::NotSet;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set, TransactionTrait};
 use std::collections::HashMap;
 use std::io;
+use std::path::PathBuf;
 
 use crate::config::Config;
 use crate::db::connection::{connect_new_db, connect_old_db};
@@ -21,6 +23,12 @@ use self::convert::{
     build_custom_data_json, build_daily_stats_json, build_launch_fields, resolve_event_duration,
     timestamp_to_date,
 };
+
+/// 迁移数据来源。
+pub enum MigrationSource {
+    Whitecloud,
+    Playnite { export_path: PathBuf },
+}
 
 // ─────────────────────────── 预加载数据 ───────────────────────────
 
@@ -71,44 +79,91 @@ pub async fn run_migration() -> Result<()> {
 
 /// 将 Whitecloud 数据迁移到指定的 ReinaManager 数据库
 pub async fn run_migration_to(new_database_path: &str) -> Result<()> {
-    println!("Reina Migrator - Whitecloud 数据库迁移工具");
+    run_migration_from_to(MigrationSource::Whitecloud, new_database_path).await
+}
 
-    // 1. 在关闭程序前再次校验目标数据库，避免选择后路径发生变化
+/// 将指定来源迁移到 ReinaManager 数据库。
+pub async fn run_migration_from_to(source: MigrationSource, new_database_path: &str) -> Result<()> {
+    println!("Reina Migrator - 数据迁移工具");
+
+    // 1. 在等待用户关闭程序前再次校验目标数据库，避免选择后路径发生变化
     Config::validate_database_url(new_database_path)?;
-    let old_database_path = Config::old_database_path()?;
+    let playnite_export = match &source {
+        MigrationSource::Whitecloud => None,
+        MigrationSource::Playnite { export_path } => {
+            Some(crate::playnite::ExportDocument::read(export_path)?)
+        }
+    };
 
-    // 2. 检查并关闭 ReinaManager 程序
-    if process::check_and_close_reina_manager()? {
-        println!("已关闭 ReinaManager 程序");
+    // 2. 等待用户手动关闭 ReinaManager，避免丢失尚未保存的数据
+    match process::wait_for_reina_manager_exit()? {
+        process::ProcessStatus::AlreadyStopped => {}
+        process::ProcessStatus::StoppedAfterPrompt => {
+            println!("ReinaManager 已退出，继续迁移。");
+        }
+        process::ProcessStatus::Cancelled => {
+            println!("迁移已取消，目标数据库未修改。");
+            pause_before_exit()?;
+            return Ok(());
+        }
     }
 
-    println!("旧数据库: {}", old_database_path);
-    println!("新数据库: {}", new_database_path);
+    match &source {
+        MigrationSource::Whitecloud => {
+            println!("Whitecloud 数据库: {}", Config::old_database_path()?)
+        }
+        MigrationSource::Playnite { export_path } => {
+            println!("Playnite 导出文件: {}", export_path.display())
+        }
+    }
+    println!("ReinaManager 数据库: {}", new_database_path);
 
     // 3. 连接数据库
     println!("连接数据库...");
-    let old_db = connect_old_db(&old_database_path).await?;
     let new_db = connect_new_db(new_database_path).await?;
+
+    if matches!(source, MigrationSource::Playnite { .. }) {
+        playnite::validate_target_schema(&new_db).await?;
+    }
 
     // 4. 备份新数据库
     backup::backup_database(&new_db, new_database_path).await?;
 
     // 5. 执行数据迁移
     println!("开始数据迁移...");
-    migrate_games(&old_db, &new_db).await?;
+    match source {
+        MigrationSource::Whitecloud => {
+            let old_database_path = Config::old_database_path()?;
+            let old_db = connect_old_db(&old_database_path).await?;
+            migrate_games(&old_db, &new_db).await?;
+            old_db.close().await?;
+        }
+        MigrationSource::Playnite { .. } => {
+            playnite::migrate(
+                playnite_export.expect("Playnite 来源应已完成导出文件解析"),
+                &new_db,
+                new_database_path,
+            )
+            .await?;
+        }
+    }
 
     // 6. 关闭数据库连接
     println!("关闭数据库连接...");
-    old_db.close().await?;
     new_db.close().await?;
 
     println!("🎉 数据迁移完成！");
     println!();
     println!("现在您可以重新启动 ReinaManager 查看迁移的数据。");
-    println!("按任意键退出...");
+    pause_before_exit()?;
+
+    Ok(())
+}
+
+fn pause_before_exit() -> Result<()> {
+    println!("按 Enter 退出...");
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
-
     Ok(())
 }
 
@@ -131,11 +186,20 @@ async fn migrate_games(old_db: &DatabaseConnection, new_db: &DatabaseConnection)
         let new_game = reina::games::ActiveModel {
             id: NotSet,
             id_type: Set("Whitecloud".to_string()),
+            date: NotSet,
             localpath: Set(localpath),
             executable: Set(executable),
+            launch_type: NotSet,
+            steam_launch_id: NotSet,
             savepath: Set(old_game.save_dir.clone()),
+            autosave: NotSet,
+            maxbackups: NotSet,
             clear: Set(Some(1)),
+            le_launch: NotSet,
+            magpie: NotSet,
             custom_data: Set(custom_data),
+            created_at: NotSet,
+            updated_at: NotSet,
         };
 
         let inserted = new_game.insert(&txn).await?;

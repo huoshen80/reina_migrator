@@ -75,12 +75,12 @@ jobs:
         body: |
           ## ReinaMigrator Release
 
-          自动构建的 ReinaMigrator用于将 Whitecloud 数据库迁移到 ReinaManager。
+          自动构建的 Reina Migrator，可将 Whitecloud 数据库或 Reina Exporter 生成的 Playnite JSON 迁移到 ReinaManager。
           
           ### 使用方法
-          1. 找到 `db.3.sqlite` 文件，它一般位于 `whitecloud安装路径\resources\data\db.3.sqlite`
-          2. 将 `db.3.sqlite` 放在程序同一目录
-          3. 运行 `reina_migrator.exe`
-          4. 程序会自动将数据迁移到 `%APPDATA%\Roaming\com.reinamanager.dev\data\reina_manager.db`
+          1. 从 Whitecloud 迁移时，将 `db.3.sqlite` 放在程序同一目录
+          2. 从 Playnite 迁移时，先使用 Reina Exporter 导出 JSON
+          3. 运行 `reina_migrator.exe`，选择迁移来源
+          4. 选择 ReinaManager 安装版或便携版数据库
         draft: false
         prerelease: false
