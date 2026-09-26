@@ -65,10 +65,14 @@ fn select_migration_source() -> Result<MigrationSource> {
 }
 
 fn select_portable_database() -> Result<Option<String>> {
+    println!("请找到便携版的 ReinaManager.exe，选择它所在的文件夹。");
+    io::stdout().flush()?;
+    let mut dialog_directory = std::env::current_dir().ok();
+
     loop {
-        let mut dialog = rfd::FileDialog::new().set_title("选择 ReinaManager 便携版目录");
-        if let Ok(current_dir) = std::env::current_dir() {
-            dialog = dialog.set_directory(current_dir);
+        let mut dialog = rfd::FileDialog::new().set_title("选择 ReinaManager.exe 所在的文件夹");
+        if let Some(directory) = &dialog_directory {
+            dialog = dialog.set_directory(directory);
         }
 
         let Some(reina_manager_dir) = dialog.pick_folder() else {
@@ -76,10 +80,29 @@ fn select_portable_database() -> Result<Option<String>> {
         };
 
         match Config::portable_database_path(&reina_manager_dir) {
-            Ok(database_path) => return Ok(Some(database_path)),
-            Err(error) => {
-                eprintln!("所选目录无效：{error}");
-                eprintln!("请选择包含 resources\\data\\reina_manager.db 的 ReinaManager 根目录。");
+            Ok(database_path) => {
+                println!("已找到便携版 ReinaManager 数据。");
+                return Ok(Some(database_path));
+            }
+            Err(_) => {
+                dialog_directory = reina_manager_dir.parent().map(ToOwned::to_owned);
+                eprintln!("所选文件夹：{}", reina_manager_dir.display());
+                eprintln!("未找到便携版 ReinaManager 的数据。");
+                eprintln!("请确认已启动过一次便携版，并选择 ReinaManager.exe 所在的文件夹。");
+                loop {
+                    print!("按 Enter 重新选择，输入 0 返回版本菜单: ");
+                    io::stdout().flush()?;
+
+                    let mut input = String::new();
+                    if io::stdin().read_line(&mut input)? == 0 {
+                        return Err(anyhow::anyhow!("标准输入已关闭"));
+                    }
+                    match input.trim() {
+                        "" => break,
+                        "0" => return Ok(None),
+                        _ => eprintln!("无效选项，请按 Enter 重新选择或输入 0 返回。"),
+                    }
+                }
             }
         }
     }
