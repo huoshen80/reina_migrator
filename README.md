@@ -67,7 +67,7 @@ Playnite 状态映射：
 | Played、Beaten、Completed | 玩过 | 2 |
 | Playing | 在玩 | 3 |
 | On Hold | 搁置 | 4 |
-| Abandoned | 抛弃 | 5 |
+| Abandoned | 弃坑 | 5 |
 | 其他自定义状态 | 想玩 | 1 |
 
 ### 旧数据库 -> 新数据库
